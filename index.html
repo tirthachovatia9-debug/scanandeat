@@ -965,9 +965,48 @@ If you cannot identify food in the image, use "Unknown Food" as name and provide
     });
 
     const data = await resp.json();
+
+    // Show exact error from Anthropic if something went wrong
+    if (data.error) {
+      showToast('⚠️ AI Error: ' + (data.error.message || data.error));
+      document.getElementById('analyzing-badge').style.display = 'none';
+      console.error('Anthropic error:', data.error);
+      return;
+    }
+
+    if (!data.content || data.content.length === 0) {
+      showToast('⚠️ Empty response from AI. Try again.');
+      document.getElementById('analyzing-badge').style.display = 'none';
+      return;
+    }
+
     const text = data.content.map(i => i.text || '').join('');
-    const clean = text.replace(/```json|```/g, '').trim();
-    const food = JSON.parse(clean);
+    console.log('Raw AI response:', text); // helps debug
+
+    // Extract JSON even if AI wraps it in extra text
+    let food;
+    try {
+      // Try 1: direct parse
+      food = JSON.parse(text.trim());
+    } catch(e1) {
+      try {
+        // Try 2: strip markdown code blocks
+        const clean = text.replace(/```json|```/g, '').trim();
+        food = JSON.parse(clean);
+      } catch(e2) {
+        try {
+          // Try 3: find JSON object anywhere in the text
+          const match = text.match(/\{[\s\S]*\}/);
+          if (match) food = JSON.parse(match[0]);
+          else throw new Error('No JSON found');
+        } catch(e3) {
+          showToast('⚠️ AI gave unexpected response. Try a clearer photo.');
+          document.getElementById('analyzing-badge').style.display = 'none';
+          console.error('Could not parse AI response:', text);
+          return;
+        }
+      }
+    }
 
     pendingMeal = food;
     showFoodResult(food);
