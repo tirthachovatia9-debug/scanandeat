@@ -736,6 +736,11 @@
 
     <div class="settings-list">
 
+      <div class="settings-item" onclick="showGeminiKeyModal()">
+        <span class="settings-icon">🔑</span>
+        <span class="settings-text">Change API Key</span>
+        <span class="settings-chevron">›</span>
+      </div>
       <div class="settings-item" onclick="resetApp()">
         <span class="settings-icon">🔄</span>
         <span class="settings-text">Reset & Start Over</span>
@@ -783,12 +788,62 @@ let meals = [];
 let pendingMeal = null;
 let chatHistory = [];
 let selectedGoal = 'maintain';
-const PROXY_URL = 'https://nutrisense-proxy.tirthachovatia270397.workers.dev';
+const GEMINI_KEY = localStorage.getItem('gemini_key') || '';
 
-window.addEventListener('DOMContentLoaded', () => {});
+window.addEventListener('DOMContentLoaded', () => {
+  if (!GEMINI_KEY) showGeminiKeyModal();
+});
 
 function getHeaders() {
   return { 'Content-Type': 'application/json' };
+}
+
+function showGeminiKeyModal() {
+  const existing = document.getElementById('gemini-modal');
+  if (existing) { existing.style.display = 'flex'; return; }
+  const modal = document.createElement('div');
+  modal.id = 'gemini-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  modal.innerHTML = `
+    <div style="background:#111811;border:1px solid rgba(93,223,122,0.25);border-radius:20px;padding:28px;max-width:400px;width:100%;">
+      <div style="font-size:36px;text-align:center;margin-bottom:14px;">🔑</div>
+      <h2 style="font-family:Sora,sans-serif;font-size:20px;font-weight:700;text-align:center;color:#e8f5e9;margin-bottom:8px;">Enter your FREE Gemini API Key</h2>
+      <div style="background:#0d1f0d;border:1px solid rgba(93,223,122,0.15);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:#a5c8a8;line-height:1.8;">
+        <strong style="color:#5ddf7a;">How to get FREE Gemini API key:</strong><br>
+        1. Go to <a href="https://aistudio.google.com/apikey" target="_blank" style="color:#5ddf7a;">aistudio.google.com/apikey</a><br>
+        2. Sign in with your Google account<br>
+        3. Click <strong style="color:#e8f5e9;">"Create API Key"</strong><br>
+        4. Copy the key and paste below ↓<br>
+        <strong style="color:#5ddf7a;">✅ 100% Free — No credit card needed!</strong>
+      </div>
+      <input id="gemini-key-input" type="password" placeholder="AIzaSy..." autocomplete="off"
+        style="width:100%;background:#182018;border:1px solid rgba(93,223,122,0.2);border-radius:12px;padding:13px 16px;color:#e8f5e9;font-size:14px;outline:none;font-family:DM Sans,sans-serif;box-sizing:border-box;margin-bottom:8px;">
+      <div id="gemini-key-error" style="color:#ff6b6b;font-size:12px;text-align:center;margin-bottom:8px;display:none;"></div>
+      <button onclick="saveGeminiKey()" style="width:100%;background:linear-gradient(135deg,#5ddf7a,#3abf58);color:#0a0f0a;font-family:Sora,sans-serif;font-weight:700;font-size:16px;padding:14px;border:none;border-radius:12px;cursor:pointer;">Save & Continue</button>
+      <p style="font-size:11px;color:#607060;text-align:center;margin-top:12px;">Stored only in your browser. Never shared.</p>
+    </div>`;
+  document.body.appendChild(modal);
+  setTimeout(() => { const el = document.getElementById('gemini-key-input'); if(el) el.focus(); }, 100);
+}
+
+function saveGeminiKey() {
+  const val = document.getElementById('gemini-key-input').value.trim();
+  const errEl = document.getElementById('gemini-key-error');
+  if (!val) {
+    errEl.textContent = '⚠️ Please paste your Gemini API key.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (!val.startsWith('AIza')) {
+    errEl.textContent = '⚠️ Gemini keys start with "AIza..." — please check and try again.';
+    errEl.style.display = 'block';
+    return;
+  }
+  errEl.style.display = 'none';
+  GEMINI_KEY = val;
+  localStorage.setItem('gemini_key', val);
+  document.getElementById('gemini-modal').style.display = 'none';
+  showToast('✅ Gemini API key saved! AI features are now active.');
 }
 
 /* ═══════════════════════════════════════════════════
@@ -921,6 +976,8 @@ function handleFoodPhoto(event) {
 }
 
 async function analyzeFood(base64) {
+  if (!GEMINI_KEY) { showGeminiKeyModal(); document.getElementById('analyzing-badge').style.display='none'; return; }
+
   const pure = base64.split(',')[1];
   const mime = base64.split(';')[0].split(':')[1];
 
@@ -931,15 +988,8 @@ async function analyzeFood(base64) {
     return;
   }
 
-  try {
-    const resp = await fetch(PROXY_URL, {
-      method: 'POST',
-      headers: getHeaders(),
-      body: JSON.stringify({
-        model: 'claude-opus-4-5',
-        max_tokens: 1000,
-        system: `You are a professional nutritionist AI. When shown a food image, you MUST respond with ONLY a valid JSON object and nothing else. No markdown, no explanation, no backticks.
-The JSON must follow this exact structure:
+  const prompt = `You are a professional nutritionist AI. Look at this food image and respond with ONLY a valid JSON object, nothing else. No markdown, no backticks, no explanation.
+JSON structure:
 {
   "name": "Food name (e.g. Biryani, Dal Rice, Pizza Slice)",
   "emoji": "one relevant emoji",
@@ -951,58 +1001,70 @@ The JSON must follow this exact structure:
   "fiber_g": number,
   "vitamins": "Key vitamins present (e.g. B12, C, D)",
   "minerals": "Key minerals (e.g. Iron, Calcium, Zinc)",
-  "description": "One sentence about this food's nutrition"
+  "description": "One sentence about this food nutrition"
 }
-If you cannot identify food in the image, use "Unknown Food" as name and provide average values for a small meal.`,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: mime, data: pure } },
-            { type: 'text', text: 'Identify this food and provide its nutritional information as JSON.' }
+If you cannot identify food, use "Unknown Food" as name with average values for a small meal.`;
+
+  try {
+    const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { inline_data: { mime_type: mime, data: pure } },
+            { text: prompt }
           ]
-        }]
+        }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 1000 }
       })
     });
 
     const data = await resp.json();
+    console.log('Gemini raw response:', JSON.stringify(data));
 
-    // Show exact error from Anthropic if something went wrong
+    // Handle Gemini errors
     if (data.error) {
-      showToast('⚠️ AI Error: ' + (data.error.message || data.error));
+      const msg = data.error.message || 'Unknown error';
+      if (msg.includes('API_KEY') || msg.includes('invalid')) {
+        showToast('❌ Invalid API key. Please update it.');
+        showGeminiKeyModal();
+      } else if (msg.includes('quota') || msg.includes('limit')) {
+        showToast('⚠️ Daily free limit reached. Try again tomorrow!');
+      } else {
+        showToast('⚠️ AI Error: ' + msg);
+      }
       document.getElementById('analyzing-badge').style.display = 'none';
-      console.error('Anthropic error:', data.error);
       return;
     }
 
-    if (!data.content || data.content.length === 0) {
-      showToast('⚠️ Empty response from AI. Try again.');
+    // Extract text from Gemini response format
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    if (!text) {
+      showToast('⚠️ No response from AI. Try a clearer photo.');
       document.getElementById('analyzing-badge').style.display = 'none';
       return;
     }
 
-    const text = data.content.map(i => i.text || '').join('');
-    console.log('Raw AI response:', text); // helps debug
+    console.log('Gemini text:', text);
 
-    // Extract JSON even if AI wraps it in extra text
+    // Extract JSON - try 3 ways
     let food;
     try {
-      // Try 1: direct parse
       food = JSON.parse(text.trim());
     } catch(e1) {
       try {
-        // Try 2: strip markdown code blocks
         const clean = text.replace(/```json|```/g, '').trim();
         food = JSON.parse(clean);
       } catch(e2) {
         try {
-          // Try 3: find JSON object anywhere in the text
           const match = text.match(/\{[\s\S]*\}/);
           if (match) food = JSON.parse(match[0]);
           else throw new Error('No JSON found');
         } catch(e3) {
           showToast('⚠️ AI gave unexpected response. Try a clearer photo.');
           document.getElementById('analyzing-badge').style.display = 'none';
-          console.error('Could not parse AI response:', text);
+          console.error('Parse failed:', text);
           return;
         }
       }
@@ -1131,20 +1193,39 @@ Today consumed so far: Calories=${consumed.cal}kcal, Protein=${consumed.protein}
 Meals logged today: ${meals.length > 0 ? meals.map(m => m.name).join(', ') : 'None yet'}.
 Respond in a warm, helpful, and concise way. Use emojis. Give actionable advice. Keep responses under 120 words.`;
 
+  if (!GEMINI_KEY) {
+    removeTyping(typingId);
+    showGeminiKeyModal();
+    return;
+  }
+
   try {
-    const resp = await fetch(PROXY_URL, {
+    // Build Gemini chat format
+    const geminiMessages = chatHistory.slice(-12).map(m => ({
+      role: m.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: m.content }]
+    }));
+
+    const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-opus-4-5',
-        max_tokens: 1000,
-        system: systemPrompt,
-        messages: chatHistory.slice(-12)
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents: geminiMessages,
+        generationConfig: { temperature: 0.7, maxOutputTokens: 300 }
       })
     });
-    const data = await resp.json();
-    const reply = data.content.map(i => i.text || '').join('');
 
+    const data = await resp.json();
+
+    if (data.error) {
+      removeTyping(typingId);
+      addBubble('bot', '⚠️ Error: ' + (data.error.message || 'Unknown') + '. Try again!');
+      console.error('Gemini chat error:', data.error);
+      return;
+    }
+
+    const reply = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I could not respond. Try again!';
     removeTyping(typingId);
     addBubble('bot', reply);
     chatHistory.push({ role: 'assistant', content: reply });
