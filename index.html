@@ -788,7 +788,7 @@ let meals = [];
 let pendingMeal = null;
 let chatHistory = [];
 let selectedGoal = 'maintain';
-const GEMINI_KEY = localStorage.getItem('gemini_key') || '';
+let GEMINI_KEY = localStorage.getItem('gemini_key') || '';
 
 window.addEventListener('DOMContentLoaded', () => {
   if (!GEMINI_KEY) showGeminiKeyModal();
